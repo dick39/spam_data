@@ -1,3 +1,5 @@
+package util;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,10 +25,15 @@ import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.AggregationClient;
 import org.apache.hadoop.hbase.client.coprocessor.LongColumnInterpreter;
+import org.apache.hadoop.hbase.filter.CompareFilter;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.FilterList;
+import org.apache.hadoop.hbase.filter.RowFilter;
 import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
+import org.apache.hadoop.hbase.filter.SubstringComparator;
 import org.apache.hadoop.hbase.util.Bytes;
+
+import po.MsgPo;
 
 public class HBaseUtil {
 	private static Configuration conf = HBaseConfiguration.create();
@@ -151,14 +158,9 @@ public class HBaseUtil {
 			long all = System.currentTimeMillis();
 			Get g = new Get(rowKey.getBytes());
 			Result rs = table.get(g);
-			List<Cell> listCells = rs.listCells(); // 指定行、全部列族的全部列
 			
-			for(Cell cell : listCells) {
-				System.out.println("列  族：" + Bytes.toString(CellUtil.cloneFamily(cell)));
-				System.out.println("列  名:" + Bytes.toString(CellUtil.cloneQualifier(cell)));
-				System.out.println("列  值：" + Bytes.toString(CellUtil.cloneValue(cell)));
-				System.out.println("时间戳：" + cell.getTimestamp());
-			}
+			System.out.println(rs);
+			
 			long end = System.currentTimeMillis();
 			System.out.println("total need time = " + (end - all) * 1.0 / 1000 + "s");
 		}
@@ -177,6 +179,7 @@ public class HBaseUtil {
 		}
 	}
 	
+	// 根据列属性,搜索出所有符合条件的行数据
 	public static void selectByFilter(String tablename, List<String> arr) throws IOException {
 		HTable table = null;
 		try {
@@ -220,6 +223,7 @@ public class HBaseUtil {
 		}
 	}
 	
+	// 根据列属性,搜索出所有符合条件的行数据,每行只包含输入的列。
 	public static void selectColumnsByFilter(String tablename, List<String> arr) throws IOException {
 		HTable table = null;
 		try {
@@ -267,26 +271,53 @@ public class HBaseUtil {
 		}
 	}
 	
-	/**
-	 * 查询表中所有行
-	 * 
-	 * @param tablename
-	 */
+	// 根据rowKey名称，搜索出包含该rowKey的所有行
+	public static void selectRowsByFilter(String tablename, String rowKey) throws IOException {
+		HTable table = null;
+		try {
+			table = new HTable(conf, tablename);
+			FilterList filterList = new FilterList();
+			Scan scan = new Scan();
+			scan.setCaching(10000);
+			scan.setCacheBlocks(false);
+			filterList.addFilter(new RowFilter(CompareFilter.CompareOp.EQUAL, new SubstringComparator(rowKey)));
+			
+			scan.setFilter(filterList);
+			long all = System.currentTimeMillis();
+			
+			ResultScanner scanner = table.getScanner(scan);
+			for(Result res : scanner) {
+				System.out.println(res);
+			}
+			
+			long end = System.currentTimeMillis();
+			System.out.println("total need time = " + (end - all) * 1.0 / 1000 + "s");
+		}
+		catch(IOException e) {
+			e.printStackTrace();
+		}
+		finally {
+			if(null != table) {
+				try {
+					table.close();
+				}
+				catch(IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+	
+	// 查出表中所有的数据
 	public static void scanAllRecord(String tablename) {
 		HTable table = null;
 		try {
 			table = new HTable(conf, tablename);
 			Scan s = new Scan();
-			ResultScanner rs = table.getScanner(s);
-			for(Result r : rs) {
-				List<Cell> listCells = r.listCells(); // 指定行、全部列族的全部列
-				
-				for(Cell cell : listCells) {
-					System.out.println("列  族：" + Bytes.toString(CellUtil.cloneFamily(cell)));
-					System.out.println("列  名:" + Bytes.toString(CellUtil.cloneQualifier(cell)));
-					System.out.println("列  值：" + Bytes.toString(CellUtil.cloneValue(cell)));
-					System.out.println("时间戳：" + cell.getTimestamp());
-				}
+			ResultScanner scanner = table.getScanner(s);
+			
+			for(Result res : scanner) {
+				System.out.println(res);
 			}
 		}
 		catch(IOException e) {
@@ -304,26 +335,42 @@ public class HBaseUtil {
 		}
 	}
 	
-	public static void scanRecord(String tablename, String startRow, String stopRow) {
+	// 根据起止行号，搜索出之间的所有行
+	public static void scanRecord(String tablename, String startRow, String stopRow, String colFamily, String... columns) {
 		HTable table = null;
 		try {
 			table = new HTable(conf, tablename);
+			long all = System.currentTimeMillis();
 			Scan s = new Scan();
-			s.setStartRow(Bytes.toBytes(startRow));
-			s.setStopRow(Bytes.toBytes(stopRow));
-			ResultScanner rs = table.getScanner(s);
-			for(Result r : rs) {
-				List<Cell> listCells = r.listCells(); // 指定行、全部列族的全部列
-				
-				System.out.println("行号：" + Bytes.toString(r.getRow()));
+			
+			if(null != startRow) {
+				s.setStartRow(Bytes.toBytes(startRow));
+			}
+			if(null != stopRow) {
+				s.setStopRow(Bytes.toBytes(stopRow));
+			}
+			
+			if(null != colFamily && null != columns && columns.length > 0) {
+				for(String col : columns) {
+					s.addColumn(Bytes.toBytes(colFamily), Bytes.toBytes(col));
+				}
+			}
+			
+			ResultScanner scanner = table.getScanner(s);
+			
+			for(Result rs : scanner) {
+				List<Cell> listCells = rs.listCells(); // 指定行、全部列族的全部列
+				System.out.println("RowKey = " + Bytes.toString(rs.getRow()));
 				for(Cell cell : listCells) {
-					System.out.print(" 列  族：" + Bytes.toString(CellUtil.cloneFamily(cell)));
-					System.out.print(" 列  名:" + Bytes.toString(CellUtil.cloneQualifier(cell)));
-					System.out.print(" 列  值：" + Bytes.toString(CellUtil.cloneValue(cell)));
-					System.out.print(" 时间戳：" + cell.getTimestamp());
+					System.out.print(Bytes.toString(CellUtil.cloneQualifier(cell)) + ",");
+					System.out.print(Bytes.toString(CellUtil.cloneValue(cell)) + ",");
+					System.out.print(cell.getTimestamp());
 					System.out.println();
 				}
 			}
+			
+			long end = System.currentTimeMillis();
+			System.out.println("total need time = " + (end - all) * 1.0 / 1000 + "s");
 		}
 		catch(IOException e) {
 			e.printStackTrace();
@@ -510,7 +557,7 @@ public class HBaseUtil {
 		}
 	}
 	
-	private static void insertTest(long count, String tableName, String colFamily, String[] columns, List<String[]> valList) {
+	public static void insertTest(long count, String tableName, String colFamily, String[] columns, List<String[]> valList) {
 		HBaseAdmin admin = null;
 		HTable table = null;
 		try {
@@ -535,7 +582,7 @@ public class HBaseUtil {
 			
 			System.out.println("start time = " + all);
 			for(int i = 0; i < count; ++i) {
-				Put p = new Put(new String("row_" + i).getBytes());
+				Put p = new Put(new String(valList.get(i)[4] + "_" + valList.get(i)[0]).getBytes());
 				
 				for(int j = 0; j < columns.length; j++) {
 					p.add(colFamily.getBytes(), Bytes.toBytes(columns[j]), Bytes.toBytes(valList.get(i)[j]));
@@ -618,6 +665,12 @@ public class HBaseUtil {
 		}
 	}
 	
+	private static MsgPo getMsgPo(Cell cell) {
+		MsgPo po = new MsgPo();
+		// po.setMsgId(cell.getQualifierArray());
+		return null;
+	}
+	
 	public static void main(String[] args) throws Throwable {
 		String[] cols = {"msgId", "userId", "sendId", "date", "md5", "contentType", "contentLength", "content", "filePath", "filterResult",
 				"policyType", "policyDetail", "policyId", "svcType" };
@@ -633,19 +686,26 @@ public class HBaseUtil {
 			valList.add(values);
 		}
 		
+		// 生成测试数据
 		// insertTest(count, "fullmessage", "full", cols, valList);
-		//
 		// System.out.println(rowCount("fullmessage", "full"));
-		// scanRecord("fullmessage", "row_1", "row_2");
+		// scanAllRecord("fullmessage");
 		
+		// 根据列的属性查询,效率大概在5秒左右
 		List<String> arr = new ArrayList<String>();
 		// arr.add("full,msgId,c5f9878d705440879b18235e6d0e92c5");
 		arr.add("full,userId,%");
 		arr.add("full,md5,1e0f65eb20acbfb27ee05ddc000b50ec");
 		// selectByFilter("fullmessage", arr);
-		selectColumnsByFilter("fullmessage", arr);
+		// selectColumnsByFilter("fullmessage", arr);
 		
-		selectRow("fullmessage", "row_555555");
+		// selectRow("fullmessage", "row_555555");
 		// System.out.println("1e0f65eb20acbfb27ee05ddc000b50ec".getBytes());
+		
+		// 根据rowkey的属性查询,效率大概在5秒左右
+		// selectRow("fullmessage", "row_555555");
+		// selectRowsByFilter("fullmessage", "row_555555");
+		// scanRecord("fullmessage", "00003e3b9e5336685200ae85d21b4f5e",
+		// "00003e3b9e5336685200ae85d21b4f5e~");
 	}
 }
